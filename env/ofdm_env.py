@@ -2,7 +2,10 @@ import numpy as np
 import random
 
 class UE(object):
-    def __init__(self, id,f_c=30*1e9,delta_f=120*1e3,N=8):
+    def __init__(self, id,f_c=30*1e9,delta_f=120*1e3,N=8, seed=777):
+        # Seed Configuration
+        np.random.seed(seed)
+        random.seed(seed)
         # Channel Generation
         self.N = N
         self.delta_f = delta_f
@@ -46,7 +49,7 @@ class ISAC_BS(object):
         # Power Configurations
         self.P_r = np.diag(np.ones(N))*1.0 # Power of Sensing
         self.P_c = np.diag(np.ones(N))*0.5 # Power of Communication
-        self.P_n = 1e-6 # Power of Background Noise
+        self.P_n = 1e-10 # Power of Background Noise
         # ENV Configurations
         self.time = 0
         self.H_c = self.get_H_c()
@@ -117,19 +120,26 @@ class ISAC_BS(object):
         # Energy Efficiency
         SUM_R_P = np.sum(self.D@self.P_r)
         SUM_C_P = np.sum(self.U@self.P_c)
-        EE_C = SUM_R_c/SUM_C_P
-        EE_R = SUM_MI_r/SUM_R_P
+        if abs(SUM_C_P-0.0)>1e-4:
+            EE_C = SUM_R_c/SUM_C_P
+        else:
+            EE_C = 0.0
+        if abs(SUM_R_P-0.0)>1e-4:
+            EE_R = SUM_MI_r/SUM_R_P
+        else:
+            EE_R = 0.0
         if print_log:
-            print("C_SINR(dB): ",10*np.log10(np.sum(C_SINR,axis=-1)))
-            print("R_SINR(dB): ",10*np.log10(np.sum(R_SINR,axis=-1)))
+            print("C_SINR(dB): ",10*np.log10(C_SINR))
+            print("R_SINR(dB): ",10*np.log10(R_SINR))
             print("SUM_R_c: ",SUM_R_c," EE: ",EE_C)
             print("SUM_MI_r: ",SUM_MI_r," EE: ",EE_R)
         return SUM_R_P,SUM_C_P,EE_C,EE_R
     
-    def reward_to_go(self,):
-        mean_EE_c = np.mean(self.EE_c_s[0:self.time+1])
-        mean_EE_r = np.mean(self.EE_r_s[0:self.time+1])
-        return (mean_EE_c/(2*1e7)+mean_EE_r/(600))
+    def reward_to_go(self,EE_C,EE_R):
+        # mean_EE_c = np.mean(self.EE_c_s[0:self.time+1])
+        # mean_EE_r = np.mean(self.EE_r_s[0:self.time+1])
+        # return (mean_EE_c/(1e7)+mean_EE_r/(100))
+        return (EE_C/(1e7)+EE_R/(100))
         
     def _get_state(self,):
         H_c = self.get_H_c()    
@@ -140,16 +150,34 @@ class ISAC_BS(object):
         state = np.concatenate([H_c,H_r,H_cr])
         return state
     
-    def step(self,action=None):
+    def step(self,action=None,freeze=False):
         done = 0
+        # DO ACTION
+        self.U = (action[0:self.N_c*self.N]).reshape(self.N_c,self.N)
+        self.D = (action[self.N_c*self.N:]).reshape(self.N_r,self.N)
+        # 
         SUM_R_P,SUM_C_P,EE_C,EE_R = self.get_performance()
         self.EE_c_s[self.time] = EE_C
         self.EE_r_s[self.time] = EE_R
-        reward = self.reward_to_go()
-        self.update_channels()
+        reward = self.reward_to_go(EE_C,EE_R)
+        if not freeze:
+            self.update_channels()
         self.time += 1
         if self.time % self.C == 0:
             done = 1
-            self.time = 0
+            next_state,_ = self.reset()
+            return next_state,reward,done
         next_state = self._get_state()
         return next_state,reward,done
+    
+    def reset(self,):
+        done = 0
+        self.time = 0
+        self.U = np.ones((self.N_c,self.N))
+        self.D = np.ones((self.N_r,self.N))
+        self.EE_c_s = np.zeros(self.C)
+        self.EE_r_s = np.zeros(self.C)
+        self.update_channels()
+        next_state = self._get_state()
+        return next_state,done
+        
