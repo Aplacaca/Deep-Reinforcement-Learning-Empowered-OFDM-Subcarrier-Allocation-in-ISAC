@@ -2,10 +2,7 @@ import numpy as np
 import random
 
 class UE(object):
-    def __init__(self, id,f_c=30*1e9,delta_f=120*1e3,N=8, seed=777):
-        # Seed Configuration
-        np.random.seed(seed)
-        random.seed(seed)
+    def __init__(self, id,f_c=30*1e9,delta_f=120*1e3,N=8):
         # Channel Generation
         self.N = N
         self.delta_f = delta_f
@@ -31,11 +28,11 @@ class ISAC_BS(object):
         random.seed(seed)
         # Subcarrier Configurations
         self.N = N # Number of Subcarriers
-        self.delta_f = 120*1e3 # Subcarrier Spacing (Hz)
-        self.f_c = 30*1e9 # Carrier Frequency (Hz)
+        self.delta_f = 30*1e3 # Subcarrier Spacing (Hz)
+        self.f_c = 6*1e9 # Carrier Frequency (Hz)
         self.S = 14 # Number of Symbols Per Slot
-        self.T_s = 8.9286*1e-6 # Duration Per Symbol (Guarded) (s)
-        self.T_0 = 0.125*1e-3 # Minimum Scheduling Cycle (s)
+        self.T_s = 33.3*1e-6 # Duration Per Symbol (Guarded) (s)
+        self.T_0 = 0.5*1e-3 # Minimum Scheduling Cycle (s)
         self.C = 1000 # Scheduling Cycles During Interested Time Window
         self.T_tot = self.C*self.T_0 # Scheduling Cycles During Interested Time Window (s)
         # UE Generate
@@ -133,13 +130,13 @@ class ISAC_BS(object):
             print("R_SINR(dB): ",10*np.log10(R_SINR))
             print("SUM_R_c: ",SUM_R_c," EE: ",EE_C)
             print("SUM_MI_r: ",SUM_MI_r," EE: ",EE_R)
-        return SUM_R_P,SUM_C_P,EE_C,EE_R
+        return SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r,EE_C,EE_R
     
     def reward_to_go(self,EE_C,EE_R):
         # mean_EE_c = np.mean(self.EE_c_s[0:self.time+1])
         # mean_EE_r = np.mean(self.EE_r_s[0:self.time+1])
         # return (mean_EE_c/(1e7)+mean_EE_r/(100))
-        return (EE_C/(1e7)+EE_R/(100))
+        return (EE_C/(5*1e4)+EE_R/10.0)
         
     def _get_state(self,):
         H_c = self.get_H_c()    
@@ -147,16 +144,20 @@ class ISAC_BS(object):
         H_c = H_c.flatten()
         H_r = H_r.flatten()
         H_cr = H_cr.flatten()
+        U_SUM = np.sum(self.U,axis = -1)
+        D_SUM = np.sum(self.D,axis = -1)
+        SCHED = np.concatenate([U_SUM,D_SUM],axis = 0).flatten()
         state = np.concatenate([H_c,H_r,H_cr])
         return state
     
     def step(self,action=None,freeze=False):
         done = 0
         # DO ACTION
-        self.U = (action[0:self.N_c*self.N]).reshape(self.N_c,self.N)
-        self.D = (action[self.N_c*self.N:]).reshape(self.N_r,self.N)
+        if action is not None:
+            self.U = (action[0:self.N_c*self.N]).reshape(self.N_c,self.N)
+            self.D = (action[self.N_c*self.N:]).reshape(self.N_r,self.N)
         # 
-        SUM_R_P,SUM_C_P,EE_C,EE_R = self.get_performance()
+        SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r,EE_C,EE_R = self.get_performance()
         self.EE_c_s[self.time] = EE_C
         self.EE_r_s[self.time] = EE_R
         reward = self.reward_to_go(EE_C,EE_R)

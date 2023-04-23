@@ -13,6 +13,7 @@ from torch.distributions.normal import Normal
 from torch.distributions import MultivariateNormal
 from torch.distributions.categorical import Categorical
 from torch.distributions.bernoulli import Bernoulli
+from utils import MultiCategoricalDistribution
 from torch.utils.tensorboard import SummaryWriter
 
 from env.ofdm_env import ISAC_BS
@@ -105,7 +106,7 @@ class Agent(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, ACTION_DIM), std=0.01),
+            layer_init(nn.Linear(64, ACTION_DIM*2), std=0.01),
             nn.Sigmoid(), # 4.21 W SIGMOID
         )
         # self.actor_logstd = nn.Parameter(torch.zeros(1, ACTION_DIM))
@@ -119,11 +120,13 @@ class Agent(nn.Module):
         if torch.any(torch.isnan(action_mean)):
             print("caught nan")
             pdb.set_trace()
-        probs = Bernoulli(logits = action_mean)
-
+        # probs = Bernoulli(logits = action_mean)
+        # probs = Categorical(logits = action_mean)
+        probs = MultiCategoricalDistribution(action_dims=[2]*ACTION_DIM)
+        probs.actions_from_params(action_logits=action_mean, deterministic=False)
+        
         if action is None:
             action = probs.sample()
-
         return action, probs.log_prob(action).sum(-1), probs.entropy().sum(-1), self.critic(x)
 
 
