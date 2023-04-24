@@ -22,7 +22,7 @@ class MultiCategoricalDistribution():
 	def proba_distribution(self, action_logits):
 		"""Create a list of categorical distribution for each dimension
 		"""
-		self.distribution = [torch.distributions.Categorical(logits=split) for split in torch.split(action_logits, tuple(self.action_dims), dim=-1)]
+		self.distribution = [torch.distributions.Categorical(probs=split) for split in torch.split(action_logits, tuple(self.action_dims), dim=-1)]
 		return self
 
 	def log_prob(self, actions):

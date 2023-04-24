@@ -1,6 +1,7 @@
 import numpy as np
 import random
-
+import pdb
+from copy import deepcopy
 class UE(object):
     def __init__(self, id,f_c=30*1e9,delta_f=120*1e3,N=8):
         # Channel Generation
@@ -10,7 +11,7 @@ class UE(object):
         self.d,self.h,self.h_r = self._generate_channel()
         
     def _generate_channel(self,):
-        d = np.random.rand()*2.0+1.0 # Range
+        d = np.random.rand()*10.0+0.5 # Range
         theta = np.random.rand()*np.pi # Azimuth Angle
         f_series = np.expand_dims(np.linspace(1,self.N+1,self.N)*self.delta_f+self.f_c, axis=0)
         h = (3*10e8/(4*np.pi*d*f_series)) # SQRT PATHLOSS
@@ -106,6 +107,29 @@ class ISAC_BS(object):
             SINR[l,:] = P_useful/(P_in+self.P_n*self.S*self.T_s)
         return SINR
     
+    def _random_allocation(self,):
+        action_u = np.random.randint(self.N_c,size=self.N)
+        action_d = np.random.randint(self.N_r,size=self.N)
+        U_SET = np.eye(self.N_c)
+        D_SET = np.eye(self.N_r)
+        self.U = U_SET[:,action_u]
+        self.D = D_SET[:,action_d]
+        
+    def _naive_allocation(self,):
+        # First we allocate CUs
+        # action_u = np.random.randint(self.N_c,size=self.N)
+        action_u = np.argsort(-self.H_c,axis=0)[:,0]
+        U_SET = np.eye(self.N_c)
+        self.U = U_SET[:,action_u]
+        # Then we assign SUs to CUs with smaller H_cr
+        H_cr_list = np.argsort(self.H_cr,axis=0)[:,0]
+        matched_su = np.argsort(self.H_r,axis=0)[:,0]
+        matched_cu = H_cr_list[:self.N_r]
+        # 
+        self.D = np.zeros((self.N_r,self.N))
+        for l in range(matched_su.shape[0]):
+            self.D[matched_su[l],:] = deepcopy(self.U[matched_cu[l],:])
+        
     def get_performance(self, print_log=False):
         # Calculate SINR On Each Subcarrier
         C_SINR = self._get_comm_sinr()
@@ -137,13 +161,31 @@ class ISAC_BS(object):
         # mean_EE_r = np.mean(self.EE_r_s[0:self.time+1])
         # return (mean_EE_c/(1e7)+mean_EE_r/(100))
         return (EE_C/(5*1e4)+EE_R/10.0)
+
+    def _penalty(self,):
+        if np.any(np.sum(self.U,axis=0) > 1) or np.any(np.sum(self.D,axis=0) > 1):
+            return True
+        else:
+            return False
         
+    # def _get_state(self,):
+    #     H_c = self.get_H_c()    
+    #     H_r,H_cr = self.get_H_r()
+    #     H_c = H_c.flatten()
+    #     H_r = H_r.flatten()
+    #     H_cr = H_cr.flatten()
+    #     U_SUM = np.sum(self.U,axis = -1)
+    #     D_SUM = np.sum(self.D,axis = -1)
+    #     SCHED = np.concatenate([U_SUM,D_SUM],axis = 0).flatten()
+    #     state = np.concatenate([H_c,H_r,H_cr])
+    #     return state
+    
     def _get_state(self,):
         H_c = self.get_H_c()    
         H_r,H_cr = self.get_H_r()
-        H_c = H_c.flatten()
-        H_r = H_r.flatten()
-        H_cr = H_cr.flatten()
+        H_c = H_c[:,0].flatten()
+        H_r = H_r[:,0].flatten()
+        H_cr = H_cr[:,0].flatten()
         U_SUM = np.sum(self.U,axis = -1)
         D_SUM = np.sum(self.D,axis = -1)
         SCHED = np.concatenate([U_SUM,D_SUM],axis = 0).flatten()
@@ -153,32 +195,47 @@ class ISAC_BS(object):
     def step(self,action=None,freeze=False):
         done = 0
         # DO ACTION
+        self._naive_allocation()
+        # self._random_allocation()
+        _,_,_,_,bl_random_EE_C,bl_random_EE_R = self.get_performance()
         if action is not None:
-            self.U = (action[0:self.N_c*self.N]).reshape(self.N_c,self.N)
-            self.D = (action[self.N_c*self.N:]).reshape(self.N_r,self.N)
+            action_u = np.argsort(-self.H_c,axis=0)[:,0]
+            U_SET = np.eye(self.N_c)
+            self.U = U_SET[:,action_u]
+            
+            # action_u = action[:self.N_c]
+            action_d = action
+            # U_SET = np.eye(self.N_c)
+            D_SET = np.eye(self.N_r)
+            # self.U = U_SET[:,action_u]
+            self.D = D_SET[:,action_d]
         # 
         SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r,EE_C,EE_R = self.get_performance()
         self.EE_c_s[self.time] = EE_C
         self.EE_r_s[self.time] = EE_R
+        # reward = (self._penalty()==0)*5 + (self._penalty()==1)*-5
         reward = self.reward_to_go(EE_C,EE_R)
+        # reward = self.reward_to_go(EE_C,EE_R) + (self._penalty()==0)*-5
+        bl_random_reward = self.reward_to_go(bl_random_EE_C,bl_random_EE_R) 
         if not freeze:
             self.update_channels()
         self.time += 1
         if self.time % self.C == 0:
             done = 1
-            next_state,_ = self.reset()
-            return next_state,reward,done
+            next_state,_ = self.reset(freeze=freeze)
+            return next_state,reward,done,bl_random_reward
         next_state = self._get_state()
-        return next_state,reward,done
+        return next_state,reward,done,bl_random_reward
     
-    def reset(self,):
+    def reset(self,freeze=False):
         done = 0
         self.time = 0
         self.U = np.ones((self.N_c,self.N))
         self.D = np.ones((self.N_r,self.N))
         self.EE_c_s = np.zeros(self.C)
         self.EE_r_s = np.zeros(self.C)
-        self.update_channels()
+        if not freeze:
+            self.update_channels()
         next_state = self._get_state()
         return next_state,done
         
