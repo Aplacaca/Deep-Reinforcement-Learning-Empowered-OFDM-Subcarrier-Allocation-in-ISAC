@@ -19,8 +19,9 @@ from torch.utils.tensorboard import SummaryWriter
 from env.ofdm_env import ISAC_BS
 import pdb
 
-STATE_DIM = 18
-ACTION_DIM = 8
+ACTION_DIM = 4 # N_s
+CATEGORICAL_DIM = 8 # N_c
+STATE_DIM = 2*CATEGORICAL_DIM + ACTION_DIM
 
 def parse_args():
     # fmt: off
@@ -99,48 +100,34 @@ class Agent(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
+            layer_init(nn.Linear(64, 1), std=0.1),
         )
         self.actor_mean = nn.Sequential(
             layer_init(nn.Linear(STATE_DIM, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, ACTION_DIM*2), std=0.01),
+            layer_init(nn.Linear(64, ACTION_DIM*CATEGORICAL_DIM), std=0.01),
+            # nn.ReLU(), # 4.21 W SIGMOID
             nn.Sigmoid(), # 4.21 W SIGMOID
+            # nn.Softmax(dim=-1), # 4.21 W SIGMOID
         )
-        # self.actor_u =nn.Sequential(
-        #     layer_init(nn.Linear(64, ACTION_DIM*8), std=0.01),
-        #     # nn.Softmax(dim=-1), # 4.21 W SIGMOID
-        #     nn.Sigmoid(), # 4.21 W SIGMOID
-        # )
-        # self.actor_d =nn.Sequential(
-        #     layer_init(nn.Linear(64, ACTION_DIM*2), std=0.01),
-        #     # nn.Softmax(dim=-1), # 4.21 W SIGMOID
-        #     nn.Sigmoid(), # 4.21 W SIGMOID
-            
-        # )
     
     def get_value(self, x):
         return self.critic(x)
 
     def get_action_and_value(self, x, action=None):
-        # action_mean_u = self.actor_u(self.actor_mean(x))
-        # action_mean_d = self.actor_d(self.actor_mean(x))
-        # action_mean = torch.cat([action_mean_u,action_mean_d],dim=-1)
         action_mean = self.actor_mean(x)
         if torch.any(torch.isnan(action_mean)):
             print("caught nan")
             pdb.set_trace()
-        # probs = Bernoulli(logits = action_mean)
-        # probs = Categorical(logits = action_mean)
         # probs = MultiCategoricalDistribution(action_dims=[8]*ACTION_DIM+[2]*ACTION_DIM)
-        probs = MultiCategoricalDistribution(action_dims=[2]*ACTION_DIM)
+        probs = MultiCategoricalDistribution(action_dims=[CATEGORICAL_DIM]*ACTION_DIM)
         probs.actions_from_params(action_logits=action_mean, deterministic=False)
         
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action).sum(-1), probs.entropy().sum(-1), self.critic(x)
+        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
 
 if __name__ == "__main__":
@@ -159,10 +146,11 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
+    # device = torch.device("cpu")
     device = torch.device("cuda:0")
 
 
-    env = ISAC_BS(N=8, N_c=8, N_r=2, seed=777)
+    env = ISAC_BS(N=8, N_c=CATEGORICAL_DIM, N_r=ACTION_DIM, seed=777)
     agent = Agent().to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
@@ -192,7 +180,7 @@ if __name__ == "__main__":
             optimizer.param_groups[0]["lr"] = lrnow
 
         episode_reward = 0.0
-        bl_random_episode_reward = 0.0
+        bl_episode_reward = 0.0
         for step in range(0, args.num_steps):
             global_step += 1
             obs[step] = next_obs
@@ -206,17 +194,17 @@ if __name__ == "__main__":
             logprobs[step] = logprob
             # TRY NOT TO MODIFY: execute the game and log data.
             
-            next_obs, reward, done, bl_random_reward = env.step(action.cpu().numpy(),freeze=False)
+            next_obs, reward, done, bl_reward = env.step(action.cpu().numpy(),freeze=False)
             # next_obs, reward, done = env.step()
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor([done]).to(device)
             writer.add_scalar("reward/reward", reward, global_step)
-            writer.add_scalar("reward/baseline_random", bl_random_reward, global_step)
+            writer.add_scalar("reward/baseline_random", bl_reward, global_step)
             # writer.add_scalars("action/action_ue", {f"UE{i}":action[i] for i in range(8)}, global_step)
             episode_reward += reward
-            bl_random_episode_reward += bl_random_reward
+            bl_episode_reward += bl_reward
         writer.add_scalar("reward/epoch_mean", episode_reward/args.num_steps, global_step)
-        writer.add_scalar("reward/bl_random_epoch_mean", bl_random_episode_reward/args.num_steps, global_step)
+        writer.add_scalar("reward/bl_epoch_mean", bl_episode_reward/args.num_steps, global_step)
         
             
         # bootstrap value if not done
@@ -250,7 +238,7 @@ if __name__ == "__main__":
         # flatten the batch
         b_obs = obs.reshape((-1,STATE_DIM))
         b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,ACTION_DIM*2))
+        b_actions = actions.reshape((-1,ACTION_DIM))
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
