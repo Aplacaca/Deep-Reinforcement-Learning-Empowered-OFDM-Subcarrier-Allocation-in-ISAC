@@ -116,19 +116,36 @@ class ISAC_BS(object):
         self.D = D_SET[:,action_d]
         
     def _naive_allocation(self,):
+        assert(self.N <= self.N_c + self.N_r)
         # First we allocate CUs
-        # action_u = np.random.randint(self.N_c,size=self.N)
         action_u = np.argsort(-self.H_c,axis=0)[:,0]
         U_SET = np.eye(self.N_c)
-        self.U = U_SET[:,action_u]
-        # Then we assign SUs to CUs with smaller H_cr
-        H_cr_list = np.argsort(self.H_cr,axis=0)[:,0]
-        matched_su = np.argsort(self.H_r,axis=0)[:,0]
-        matched_cu = H_cr_list[:self.N_r]
-        # 
+        self.U = np.zeros((self.N_c,self.N))
+        # self.U = U_SET[:,action_u]
+        self.U[:,:self.N_c] = U_SET[:,action_u]
+        # Init
+        matched_su = None
+        matched_cu = None
+        H_r_exclusive = None
+        # Then we assign SUs 
         self.D = np.zeros((self.N_r,self.N))
-        for l in range(matched_su.shape[0]):
-            self.D[matched_su[l],:] = deepcopy(self.U[matched_cu[l],:])
+        H_r_rev = np.argsort(-self.H_r,axis=0)[:,0] # decrease
+        D_SET = np.eye(self.N_r)
+        # We first allocate SU to vacant subcarrier
+        if self.N_c < self.N:
+            N_vacant = min(self.N - self.N_c, self.N_r)
+            H_r_exclusive = H_r_rev[:N_vacant]
+            self.D[:,self.N_c:] = D_SET[:,H_r_exclusive]
+        # Then we match SUs to CUs with smaller H_cr
+        if self.N_r > self.N - self.N_c:
+            N_vacant = min(self.N - self.N_c, self.N_r)
+            N_share = self.N_r - (self.N - self.N_c)
+            H_cr_list = np.argsort(self.H_cr,axis=0)[:,0] # increase
+            matched_su = H_r_rev[N_vacant:]
+            matched_cu = H_cr_list[:N_share]
+            for l in range(matched_su.shape[0]):
+                self.D[matched_su[l],:] = deepcopy(self.U[matched_cu[l],:])
+        # print("H_r_exclusive: ",H_r_exclusive," matched_su: ", matched_su)
         
     def get_performance(self, print_log=False):
         # Calculate SINR On Each Subcarrier
@@ -168,18 +185,6 @@ class ISAC_BS(object):
         else:
             return False
         
-    # def _get_state(self,):
-    #     H_c = self.get_H_c()    
-    #     H_r,H_cr = self.get_H_r()
-    #     H_c = H_c.flatten()
-    #     H_r = H_r.flatten()
-    #     H_cr = H_cr.flatten()
-    #     U_SUM = np.sum(self.U,axis = -1)
-    #     D_SUM = np.sum(self.D,axis = -1)
-    #     SCHED = np.concatenate([U_SUM,D_SUM],axis = 0).flatten()
-    #     state = np.concatenate([H_c,H_r,H_cr])
-    #     return state
-    
     def _get_state(self,):
         H_c = self.get_H_c()    
         H_r,H_cr = self.get_H_r()
@@ -199,15 +204,10 @@ class ISAC_BS(object):
         # self._random_allocation()
         _,_,_,_,bl_random_EE_C,bl_random_EE_R = self.get_performance()
         if action is not None:
-            action_u = np.argsort(-self.H_c,axis=0)[:,0]
-            U_SET = np.eye(self.N_c)
-            self.U = U_SET[:,action_u]
-            
-            # action_u = action[:self.N_c]
-            # U_SET = np.eye(self.N_c)
-            # D_SET = np.eye(self.N_r)
-            # self.U = U_SET[:,action_u]
-            self.D = deepcopy(self.U[action,:])
+            D_SET = np.zeros((self.N_r,self.N_r+1))
+            D_SET[:,:self.N_r] = np.eye(self.N_r)
+            self.D = D_SET[:,action]
+            # self.D = deepcopy(self.U[action,:])
         # 
         SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r,EE_C,EE_R = self.get_performance()
         self.EE_c_s[self.time] = EE_C
