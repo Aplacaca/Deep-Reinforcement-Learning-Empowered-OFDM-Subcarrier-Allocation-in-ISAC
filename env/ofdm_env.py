@@ -204,11 +204,10 @@ class ISAC_BS(object):
             self.U = U_SET[:,action_u]
             
             # action_u = action[:self.N_c]
-            action_d = action
             # U_SET = np.eye(self.N_c)
-            D_SET = np.eye(self.N_r)
+            # D_SET = np.eye(self.N_r)
             # self.U = U_SET[:,action_u]
-            self.D = D_SET[:,action_d]
+            self.D = deepcopy(self.U[action,:])
         # 
         SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r,EE_C,EE_R = self.get_performance()
         self.EE_c_s[self.time] = EE_C
