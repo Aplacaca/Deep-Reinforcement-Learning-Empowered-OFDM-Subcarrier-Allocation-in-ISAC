@@ -23,7 +23,7 @@ class UE(object):
 
 
 class ISAC_BS(object):
-    def __init__(self, N=8, N_c=8, N_r=8, seed=777):
+    def __init__(self, N=8, N_c=8, N_r=8, seed=777, rho=0.5):
         # Seed Configuration
         np.random.seed(seed)
         random.seed(seed)
@@ -46,7 +46,7 @@ class ISAC_BS(object):
         self.D = np.ones((N_r,N))
         # Power Configurations
         self.P_r = np.diag(np.ones(N))*1.0 # Power of Sensing
-        self.P_c = np.diag(np.ones(N))*0.5 # Power of Communication
+        self.P_c = np.diag(np.ones(N))*rho # Power of Communication
         self.P_n = 1e-10 # Power of Background Noise
         # ENV Configurations
         self.time = 0
@@ -180,7 +180,7 @@ class ISAC_BS(object):
         return (EE_C/(5*1e4)+EE_R/10.0)
 
     def _penalty(self,):
-        if np.any(np.sum(self.U,axis=0) > 1) or np.any(np.sum(self.D,axis=0) > 1):
+        if np.any(np.sum(self.D,axis=-1) < 1):
             return True
         else:
             return False
@@ -213,8 +213,8 @@ class ISAC_BS(object):
         self.EE_c_s[self.time] = EE_C
         self.EE_r_s[self.time] = EE_R
         # reward = (self._penalty()==0)*5 + (self._penalty()==1)*-5
-        reward = self.reward_to_go(EE_C,EE_R)
-        # reward = self.reward_to_go(EE_C,EE_R) + (self._penalty()==0)*-5
+        # reward = self.reward_to_go(EE_C,EE_R)
+        reward = self.reward_to_go(EE_C,EE_R) + (self._penalty()==0)*-10
         bl_random_reward = self.reward_to_go(bl_random_EE_C,bl_random_EE_R) 
         if not freeze:
             self.update_channels()
