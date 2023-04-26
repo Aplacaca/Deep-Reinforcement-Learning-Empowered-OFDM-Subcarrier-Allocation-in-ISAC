@@ -198,16 +198,37 @@ class ISAC_BS(object):
         # # return combined
         # return positive_reward
     
-    def bl_reward_to_go(self,):
-        positive_reward = (self.bl_R_c_sum/self.bl_P_c_sum)/(1e6) + self.bl_MI_r_sum/self.bl_P_r_sum/10.0
-        return positive_reward
-    
+    def lt_reward_to_go(self,P_c_sum,R_c_sum,P_r_sum,MI_r_sum):
+        if abs(P_c_sum-0.0)<1e-4:
+            EE_C = 0.0
+        else:
+            EE_C = R_c_sum/P_c_sum
+        if abs(P_r_sum-0.0)<1e-4:
+            EE_R = 0.0
+        else:
+            EE_R = MI_r_sum/P_r_sum
+        return (EE_C/(5*1e5)+EE_R/5.0) # update
+          
 
     def _penalty(self,):
         if np.any(np.sum(self.D,axis=0) > 1.5) or np.any(np.sum(self.D,axis=-1) < 0.9):
             return True
         else:
             return False
+        
+    def _penalty_lt(self,):
+        N_vacant = max(self.N - self.N_c, 0)
+        if np.any(self.select_num < (self.time+1)*1/self.N_r) or np.any(np.sum(self.D, axis=0) > 1.5):
+            return True
+        else:
+            return False
+        
+    def _get_reducted_action(self,):
+        IP_ = np.sum(self.U@self.P_c*np.power(self.H_cr,2), axis = 0)
+        idx = np.sort(np.argsort(IP_[self.N_r:])[:self.N_r])
+        action_set = np.zeros(self.N)
+        action_set[idx] = 1.0
+        return action_set,idx
         
     def _get_state(self,):
         H_c = self.get_H_c()    
@@ -220,10 +241,12 @@ class ISAC_BS(object):
         U_SUM = np.sum(self.U,axis = -1)
         D_SUM = np.sum(self.D,axis = -1)
         SCHED = self.select_num.flatten()/(self.C+0.000001)
-        state = np.concatenate([SCHED,IP_])
+        #
+        action_set,idx = self._get_reducted_action()
+        state = np.concatenate([SCHED,IP_,action_set])
         return state
     
-    def step(self,action=None,freeze=False):
+    def step(self,action=None,freeze=False,reduction=True):
         done = 0
         _penalty = 0
         # DO ACTION
@@ -247,11 +270,21 @@ class ISAC_BS(object):
             # self.select_num += np.concatenate([np.sum(self.U,axis=-1),np.sum(self.D,axis=-1)],axis=0)
             # _penalty = self._penalty()
          # LET SUBCARRIER CHOOSE SU (PERMIT NOT CHOOSE)
-            _SET = np.zeros((self.N_r, self.N_r+1))
-            _SET[:,:self.N_r] = np.eye(self.N_r)
-            # SU
-            self.D = _SET[:,action]
-            self.select_num += np.sum(self.D,axis=-1)
+            if not reduction:
+                _SET = np.zeros((self.N_r, self.N_r+1))
+                _SET[:,:self.N_r] = np.eye(self.N_r)
+                # SU
+                self.D = _SET[:,action]
+                lt_penalty = self._penalty_lt()
+                self.select_num += np.sum(self.D,axis=-1)
+            else:
+                action_set,idx = self._get_reducted_action()
+                _SET = np.zeros((self.N_r, self.N_r+1))
+                _SET[:,:self.N_r] = np.eye(self.N_r)
+                # SU
+                self.D[:,idx] = _SET[:,action]
+                lt_penalty = self._penalty_lt()
+                self.select_num += np.sum(self.D,axis=-1)
         # LET SU CHOOSE SUBCARRIER (PERMIT NOT CHOOSE)
             # _SET = np.zeros((self.N+1, self.N))
             # _SET[:self.N,:] = np.eye(self.N)
@@ -270,13 +303,12 @@ class ISAC_BS(object):
         self.EE_c_s[self.time] = EE_C
         self.EE_r_s[self.time] = EE_R
         # reward = self.reward_to_go(EE_C,EE_R)
-        reward = (self._penalty()==0)*self.reward_to_go(EE_C,EE_R)+(self._penalty()==1)*-5
-        #
+        # reward = (self._penalty()==0)*self.reward_to_go(EE_C,EE_R)+(self._penalty()==1)*-5
         # reward_raw = self.reward_to_go(EE_C,EE_R)
-        bl_random_reward = self.reward_to_go(bl_random_EE_C,bl_random_EE_R) 
+        # bl_random_reward = self.reward_to_go(bl_random_EE_C,bl_random_EE_R) 
         ####################new
-        # bl_random_reward = self.bl_reward_to_go() 
-        # reward = self.reward_to_go()
+        bl_random_reward = self.lt_reward_to_go(self.bl_P_c_sum,self.bl_R_c_sum,self.bl_P_r_sum,self.bl_MI_r_sum) 
+        reward = (lt_penalty==0)*self.lt_reward_to_go(self.P_c_sum,self.R_c_sum,self.P_r_sum,self.MI_r_sum) + (lt_penalty==1)*-5
         
         if not freeze:
             self.update_channels()

@@ -31,9 +31,9 @@ def parse_args(args = None):
     parser.add_argument('--subcarrier_number', type=int, default=8, help='subcarrier_number')
     parser.add_argument('--cu_number', type=int, default=6, help='cu_number')
     parser.add_argument('--su_number', type=int, default=4, help='su_number')
-    parser.add_argument('--action-dim', type=int, default=8, help='action-dim')
+    parser.add_argument('--action-dim', type=int, default=4, help='action-dim')
     parser.add_argument('--categorical-dim', type=int, default=5, help='categorical-dim of each action')
-    parser.add_argument('--state-dim', type=int, default=12, help='DIM OF STATE')
+    parser.add_argument('--state-dim', type=int, default=20, help='DIM OF STATE')
     
     # Exiperiment Args
     parser.add_argument('--daytime', type=str, default=datetime.datetime.now().strftime('TD_%Y-%m-%d-%H-%M-%S'),
@@ -44,7 +44,7 @@ def parse_args(args = None):
         help='the learning rate of the optimizer')
     parser.add_argument('--seed', type=int, default=777,
         help='seed of the experiment')
-    parser.add_argument('--total-timesteps', type=int, default=400000,
+    parser.add_argument('--total-timesteps', type=int, default=600000,
         help='total timesteps of the experiments')
     parser.add_argument('--torch-deterministic', type=lambda x:bool(strtobool(x)), default=True, nargs='?', const=True,
         help='if toggled, `torch.backends.cudnn.deterministic=False`')
