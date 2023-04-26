@@ -29,11 +29,11 @@ def parse_args(args = None):
     parser = argparse.ArgumentParser()
     # Env Config
     parser.add_argument('--subcarrier_number', type=int, default=8, help='subcarrier_number')
-    parser.add_argument('--cu_number', type=int, default=8, help='cu_number')
-    parser.add_argument('--su_number', type=int, default=8, help='su_number')
+    parser.add_argument('--cu_number', type=int, default=6, help='cu_number')
+    parser.add_argument('--su_number', type=int, default=4, help='su_number')
     parser.add_argument('--action-dim', type=int, default=8, help='action-dim')
-    parser.add_argument('--categorical-dim', type=int, default=9, help='categorical-dim of each action')
-    parser.add_argument('--state-dim', type=int, default=24, help='DIM OF STATE')
+    parser.add_argument('--categorical-dim', type=int, default=5, help='categorical-dim of each action')
+    parser.add_argument('--state-dim', type=int, default=12, help='DIM OF STATE')
     
     # Exiperiment Args
     parser.add_argument('--daytime', type=str, default=datetime.datetime.now().strftime('TD_%Y-%m-%d-%H-%M-%S'),
@@ -44,7 +44,7 @@ def parse_args(args = None):
         help='the learning rate of the optimizer')
     parser.add_argument('--seed', type=int, default=777,
         help='seed of the experiment')
-    parser.add_argument('--total-timesteps', type=int, default=600000,
+    parser.add_argument('--total-timesteps', type=int, default=400000,
         help='total timesteps of the experiments')
     parser.add_argument('--torch-deterministic', type=lambda x:bool(strtobool(x)), default=True, nargs='?', const=True,
         help='if toggled, `torch.backends.cudnn.deterministic=False`')
@@ -151,6 +151,7 @@ class trainer(object):
         torch.backends.cudnn.deterministic = args.torch_deterministic
         # Agent init
         self.agent = Agent(self.args.state_dim,self.args.action_dim,self.args.categorical_dim).to(self.device)
+        # self.agent.load_state_dict(torch.load("/home/dhy/final/ISAC_OFDM/models/PPO_TD_2023-04-26-08-35-38/update_100.mo"))
         # ENV init
         self.env = ISAC_BS(N=args.subcarrier_number, N_c=self.args.cu_number, N_r=self.args.su_number, seed=args.seed)
         self.optimizer = optim.Adam(self.agent.parameters(), lr=args.learning_rate, eps=1e-5)
@@ -203,6 +204,7 @@ class trainer(object):
                 optimizer.param_groups[0]["lr"] = lrnow
 
             episode_reward = 0.0
+            episode_reward_raw = 0.0
             bl_episode_reward = 0.0
             for step in range(0, args.num_steps):
                 global_step += 1
@@ -217,14 +219,20 @@ class trainer(object):
                 logprobs[step] = logprob
                 # TRY NOT TO MODIFY: execute the game and log data.
                 
-                next_obs, reward, done, bl_reward = env.step(action.cpu().numpy(),freeze=False)
+                next_state,reward,done,EE_C,EE_R,bl_reward,bl_EE_C,bl_EE_R = env.step(action.cpu().numpy(),freeze=False)
                 # next_obs, reward, done = env.step()
                 rewards[step] = torch.tensor(reward).to(device).view(-1)
                 next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor([done]).to(device)
+                log_action = action.cpu().numpy()
                 if tensorboard:
                     writer.add_scalar("reward/reward", reward, global_step)
                     writer.add_scalar("reward/baseline_random", bl_reward, global_step)
-                    # writer.add_scalars("action/action_ue", {f"UE{i}":action[i] for i in range(8)}, global_step)
+                    for k in range(args.action_dim):
+                        writer.add_scalar(f"action/sc{k}", log_action[k], global_step)
+                    writer.add_scalar("env/EE_C", EE_C, global_step)
+                    writer.add_scalar("env/EE_R", EE_R, global_step)
+                    writer.add_scalar("env/bl_EE_C", bl_EE_C, global_step)
+                    writer.add_scalar("env/bl_EE_R", bl_EE_R, global_step)
                 episode_reward += reward
                 bl_episode_reward += bl_reward
                 results["reward"].append(reward)
@@ -234,6 +242,7 @@ class trainer(object):
                 results["baseline_reward_epoch_mean"].append(bl_episode_reward)
             if tensorboard:
                 writer.add_scalar("reward/epoch_mean", episode_reward/args.num_steps, global_step)
+                writer.add_scalar("reward/epoch_mean_raw", episode_reward_raw/args.num_steps, global_step)
                 writer.add_scalar("reward/bl_epoch_mean", bl_episode_reward/args.num_steps, global_step)
                 
             # bootstrap value if not done
@@ -326,7 +335,7 @@ class trainer(object):
                 if args.target_kl is not None:
                     if approx_kl > args.target_kl:
                         break
-            if update%100 == 0:
+            if update%50 == 0:
                 if not os.path.exists(f'{os.path.dirname(__file__)}/models/PPO_{args.daytime}/'):
                     os.mkdir(f'{os.path.dirname(__file__)}/models/PPO_{args.daytime}/')
                 torch.save(agent.state_dict(), \

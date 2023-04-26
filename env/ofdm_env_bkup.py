@@ -34,7 +34,7 @@ class ISAC_BS(object):
         self.S = 14 # Number of Symbols Per Slot
         self.T_s = 33.3*1e-6 # Duration Per Symbol (Guarded) (s)
         self.T_0 = 0.5*1e-3 # Minimum Scheduling Cycle (s)
-        self.C = 100 # Scheduling Cycles During Interested Time Window
+        self.C = 1000 # Scheduling Cycles During Interested Time Window
         self.T_tot = self.C*self.T_0 # Scheduling Cycles During Interested Time Window (s)
         # UE Generate
         self.M_c = [UE(id="c"+str(i),f_c=self.f_c,delta_f = self.delta_f,N=self.N) for i in range(N_c)] # Communication Users
@@ -59,7 +59,7 @@ class ISAC_BS(object):
         self.P_r_sum = 0.0
         self.R_c_sum = 0.0
         self.MI_r_sum = 0.0
-        self.select_num = np.zeros((self.N_r))
+        self.select_num = np.zeros((self.N_c+self.N_r))
         #
         self.bl_R_c_sum = 0.0
         self.bl_MI_r_sum = 0.0
@@ -185,26 +185,15 @@ class ISAC_BS(object):
             print("SUM_MI_r: ",SUM_MI_r," EE: ",EE_R)
         return SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r,EE_C,EE_R
     
-    def reward_to_go(self,EE_C,EE_R):
+    def reward_to_go(self,):
         # mean_EE_c = np.mean(self.EE_c_s[0:self.time+1])
         # mean_EE_r = np.mean(self.EE_r_s[0:self.time+1])
-        # return (EE_C/(5*1e4)+EE_R/10.0) #you yiding xiaoguo 
-        return (EE_C/(5*1e5)+EE_R/5.0) # update
-        # if abs(self.P_c_sum-0.0)>1e-4:
-        #     
+        # return (EE_C/(5*1e4)+EE_R/10.0) you yiding xiaoguo 
+        positive_reward = self.R_c_sum/self.P_c_sum/5*1e4 + self.MI_r_sum/self.P_r_sum/10.0
         
-        # # neg_reward = -5*(np.sum(self.select_num < 1))
-        # # combined = (neg_reward == 0)*positive_reward + neg_reward
-        # # return combined
-        # return positive_reward
-    
-    def bl_reward_to_go(self,):
-        positive_reward = (self.bl_R_c_sum/self.bl_P_c_sum)/(1e6) + self.bl_MI_r_sum/self.bl_P_r_sum/10.0
-        return positive_reward
-    
 
     def _penalty(self,):
-        if np.any(np.sum(self.D,axis=0) > 1.5) or np.any(np.sum(self.D,axis=-1) < 0.9):
+        if np.any(np.sum(self.D,axis=0) > 2):
             return True
         else:
             return False
@@ -212,15 +201,13 @@ class ISAC_BS(object):
     def _get_state(self,):
         H_c = self.get_H_c()    
         H_r,H_cr = self.get_H_r()
-        IP_ = np.sum(self.U@self.P_c*np.power(self.H_cr,2), axis = 0)
         H_c = H_c[:,0].flatten()
         H_r = H_r[:,0].flatten()
         H_cr = H_cr[:,0].flatten()
-        #
         U_SUM = np.sum(self.U,axis = -1)
         D_SUM = np.sum(self.D,axis = -1)
-        SCHED = self.select_num.flatten()/(self.C+0.000001)
-        state = np.concatenate([SCHED,IP_])
+        SCHED = np.concatenate([U_SUM,D_SUM],axis = 0).flatten()
+        state = np.concatenate([H_c,H_r,H_cr])
         return state
     
     def step(self,action=None,freeze=False):
@@ -230,11 +217,6 @@ class ISAC_BS(object):
         self._naive_allocation()
         # self._random_allocation()
         bl_SUM_R_P,bl_SUM_C_P,bl_SUM_R_c,bl_SUM_MI_r,bl_random_EE_C,bl_random_EE_R = self.get_performance()
-        #
-        self.bl_MI_r_sum += bl_SUM_MI_r
-        self.bl_R_c_sum += bl_SUM_R_c
-        self.bl_P_c_sum += bl_SUM_C_P
-        self.bl_P_r_sum += bl_SUM_R_P
         if action is not None:
         # LET SUBCARRIER CHOOSE SU
             # D_SET = np.zeros((self.N_r,self.N_r+1))
@@ -242,42 +224,27 @@ class ISAC_BS(object):
             # self.D = D_SET[:,action]
             # _penalty = self._penalty()
         # LET SU CHOOSE SUBCARRIER 
-            # D_SET = np.eye(self.N)
-            # self.D = D_SET[action,:]
-            # self.select_num += np.concatenate([np.sum(self.U,axis=-1),np.sum(self.D,axis=-1)],axis=0)
-            # _penalty = self._penalty()
-         # LET SUBCARRIER CHOOSE SU (PERMIT NOT CHOOSE)
-            _SET = np.zeros((self.N_r, self.N_r+1))
-            _SET[:,:self.N_r] = np.eye(self.N_r)
-            # SU
-            self.D = _SET[:,action]
-            self.select_num += np.sum(self.D,axis=-1)
-        # LET SU CHOOSE SUBCARRIER (PERMIT NOT CHOOSE)
-            # _SET = np.zeros((self.N+1, self.N))
-            # _SET[:self.N,:] = np.eye(self.N)
-            # # SU
-            # self.D = _SET[action,:]
-            # self.select_num += np.sum(self.D,axis=-1)
-        
+            D_SET = np.eye(self.N)
+            self.D = D_SET[action,:]
+            _penalty = self._penalty()
+            # self.D = deepcopy(self.U[action,:])
+        # 
         SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r,EE_C,EE_R = self.get_performance()
         #
         self.MI_r_sum += SUM_MI_r
         self.R_c_sum += SUM_R_c
         self.P_c_sum += SUM_C_P
         self.P_r_sum += SUM_R_P
-        
         #
         self.EE_c_s[self.time] = EE_C
         self.EE_r_s[self.time] = EE_R
+        reward = self.R_c_sum/self.P_c_sum/5*1e4 + self.MI_r_sum/self.P_r_sum/10.0
         # reward = self.reward_to_go(EE_C,EE_R)
-        reward = (self._penalty()==0)*self.reward_to_go(EE_C,EE_R)+(self._penalty()==1)*-5
+        # reward = (self._penalty()==0)*self.reward_to_go(EE_C,EE_R)+(self._penalty()==1)*-5
         #
         # reward_raw = self.reward_to_go(EE_C,EE_R)
+        # bl_random_reward = self.reward_to_go(bl_random_EE_C,bl_random_EE_R) 
         bl_random_reward = self.reward_to_go(bl_random_EE_C,bl_random_EE_R) 
-        ####################new
-        # bl_random_reward = self.bl_reward_to_go() 
-        # reward = self.reward_to_go()
-        
         if not freeze:
             self.update_channels()
         self.time += 1
@@ -300,7 +267,7 @@ class ISAC_BS(object):
         self.P_r_sum = 0.0
         self.R_c_sum = 0.0
         self.MI_r_sum = 0.0
-        self.select_num = np.zeros((self.N_r))
+        self.select_num = np.zeros((self.N_c+self.N_r))
         #
         self.bl_R_c_sum = 0.0
         self.bl_MI_r_sum = 0.0
