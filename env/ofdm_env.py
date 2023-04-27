@@ -67,6 +67,11 @@ class ISAC_BS(object):
         self.bl_P_r_sum = 0.0
         #
         self.reward = 0.0
+        #
+        self.ran_R_c_sum = 0.0
+        self.ran_MI_r_sum = 0.0
+        self.ran_P_c_sum = 0.0
+        self.ran_P_r_sum = 0.0
 
     def get_H_c(self,):
         H_c = np.concatenate([UE.h for UE in self.M_c],axis=0)
@@ -120,11 +125,20 @@ class ISAC_BS(object):
         return SINR
     
     def _random_allocation(self,):
-        action_u = np.random.randint(self.N_c,size=self.N)
+        # sort U
+        assert(self.N <= self.N_c + self.N_r)
+        # First we allocate CUs
+        action_u = np.argsort(-self.H_c,axis=0)[:,0]
+        U_SET = np.eye(self.N_c)
+        self.U = np.zeros((self.N_c,self.N))
+        # self.U = U_SET[:,action_u]
+        self.U[:,:self.N_c] = U_SET[:,action_u]
+        # random D
+        # action_u = np.random.randint(self.N_c,size=self.N)
         action_d = np.random.randint(self.N_r,size=self.N)
         U_SET = np.eye(self.N_c)
         D_SET = np.eye(self.N_r)
-        self.U = U_SET[:,action_u]
+        # self.U = U_SET[:,action_u]
         self.D = D_SET[:,action_d]
         
     def _naive_allocation(self,):
@@ -218,14 +232,14 @@ class ISAC_BS(object):
         
     def _penalty_lt(self,):
         N_vacant = max(self.N - self.N_c, 0)
-        if np.any(self.select_num < (self.time+1)*1/self.N_r) or np.any(np.sum(self.D, axis=0) > 1.5):
+        if np.any(self.select_num < (self.time+1)*1/self.N_r) or np.any(np.sum(self.D, axis=0) > 1.5) or N_vacant*np.any(np.sum(self.D[:,self.N-N_vacant:], axis=0) < 0.9):
             return True
         else:
             return False
         
     def _get_reducted_action(self,):
         IP_ = np.sum(self.U@self.P_c*np.power(self.H_cr,2), axis = 0)
-        idx = np.sort(np.argsort(IP_[self.N_r:])[:self.N_r])
+        idx = np.sort(np.argsort(IP_)[:self.N_r])
         action_set = np.zeros(self.N)
         action_set[idx] = 1.0
         return action_set,idx
@@ -248,10 +262,16 @@ class ISAC_BS(object):
     
     def step(self,action=None,freeze=False,reduction=True):
         done = 0
-        _penalty = 0
+        lt_penalty = 0
         # DO ACTION
+        self._random_allocation()
+        ran_SUM_R_P,ran_SUM_C_P,ran_SUM_R_c,ran_SUM_MI_r,ran_random_EE_C,ran_random_EE_R = self.get_performance()
+        #
+        self.ran_MI_r_sum += ran_SUM_MI_r
+        self.ran_R_c_sum += ran_SUM_R_c
+        self.ran_P_c_sum += ran_SUM_C_P
+        self.ran_P_r_sum += ran_SUM_R_P
         self._naive_allocation()
-        # self._random_allocation()
         bl_SUM_R_P,bl_SUM_C_P,bl_SUM_R_c,bl_SUM_MI_r,bl_random_EE_C,bl_random_EE_R = self.get_performance()
         #
         self.bl_MI_r_sum += bl_SUM_MI_r
@@ -308,7 +328,9 @@ class ISAC_BS(object):
         # bl_random_reward = self.reward_to_go(bl_random_EE_C,bl_random_EE_R) 
         ####################new
         bl_random_reward = self.lt_reward_to_go(self.bl_P_c_sum,self.bl_R_c_sum,self.bl_P_r_sum,self.bl_MI_r_sum) 
+        ran_random_reward = self.lt_reward_to_go(self.ran_P_c_sum,self.ran_R_c_sum,self.ran_P_r_sum,self.ran_MI_r_sum) 
         reward = (lt_penalty==0)*self.lt_reward_to_go(self.P_c_sum,self.R_c_sum,self.P_r_sum,self.MI_r_sum) + (lt_penalty==1)*-5
+        reward_raw = self.lt_reward_to_go(self.P_c_sum,self.R_c_sum,self.P_r_sum,self.MI_r_sum)
         
         if not freeze:
             self.update_channels()
@@ -316,9 +338,9 @@ class ISAC_BS(object):
         if self.time % self.C == 0:
             done = 1
             next_state,_ = self.reset(freeze=freeze)
-            return next_state,reward,done,EE_C,EE_R,bl_random_reward,bl_random_EE_C,bl_random_EE_R
+            return next_state,reward,done,EE_C,EE_R,bl_random_reward,bl_random_EE_C,bl_random_EE_R,reward_raw,ran_random_reward
         next_state = self._get_state()
-        return next_state,reward,done,EE_C,EE_R,bl_random_reward,bl_random_EE_C,bl_random_EE_R
+        return next_state,reward,done,EE_C,EE_R,bl_random_reward,bl_random_EE_C,bl_random_EE_R,reward_raw,ran_random_reward
     
     def reset(self,freeze=False):
         done = 0
@@ -338,6 +360,11 @@ class ISAC_BS(object):
         self.bl_MI_r_sum = 0.0
         self.bl_P_c_sum = 0.0
         self.bl_P_r_sum = 0.0
+        #
+        self.ran_R_c_sum = 0.0
+        self.ran_MI_r_sum = 0.0
+        self.ran_P_c_sum = 0.0
+        self.ran_P_r_sum = 0.0
         if not freeze:
             self.update_channels()
         next_state = self._get_state()

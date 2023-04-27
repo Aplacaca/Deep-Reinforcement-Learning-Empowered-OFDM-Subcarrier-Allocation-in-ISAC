@@ -29,11 +29,11 @@ def parse_args(args = None):
     parser = argparse.ArgumentParser()
     # Env Config
     parser.add_argument('--subcarrier_number', type=int, default=8, help='subcarrier_number')
-    parser.add_argument('--cu_number', type=int, default=6, help='cu_number')
-    parser.add_argument('--su_number', type=int, default=4, help='su_number')
-    parser.add_argument('--action-dim', type=int, default=4, help='action-dim')
-    parser.add_argument('--categorical-dim', type=int, default=5, help='categorical-dim of each action')
-    parser.add_argument('--state-dim', type=int, default=20, help='DIM OF STATE')
+    parser.add_argument('--cu_number', type=int, default=4, help='cu_number')
+    parser.add_argument('--su_number', type=int, default=2, help='su_number')
+    parser.add_argument('--action-dim', type=int, default=2, help='action-dim')
+    parser.add_argument('--categorical-dim', type=int, default=3, help='categorical-dim of each action')
+    parser.add_argument('--state-dim', type=int, default=18, help='DIM OF STATE')
     
     # Exiperiment Args
     parser.add_argument('--daytime', type=str, default=datetime.datetime.now().strftime('TD_%Y-%m-%d-%H-%M-%S'),
@@ -219,13 +219,14 @@ class trainer(object):
                 logprobs[step] = logprob
                 # TRY NOT TO MODIFY: execute the game and log data.
                 
-                next_state,reward,done,EE_C,EE_R,bl_reward,bl_EE_C,bl_EE_R = env.step(action.cpu().numpy(),freeze=False)
+                next_state,reward,done,EE_C,EE_R,bl_reward,bl_EE_C,bl_EE_R,reward_raw,_ = env.step(action.cpu().numpy(),freeze=False)
                 # next_obs, reward, done = env.step()
                 rewards[step] = torch.tensor(reward).to(device).view(-1)
                 next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor([done]).to(device)
                 log_action = action.cpu().numpy()
                 if tensorboard:
                     writer.add_scalar("reward/reward", reward, global_step)
+                    writer.add_scalar("reward/reward_raw", reward_raw, global_step)
                     writer.add_scalar("reward/baseline_random", bl_reward, global_step)
                     for k in range(args.action_dim):
                         writer.add_scalar(f"action/sc{k}", log_action[k], global_step)
@@ -234,6 +235,7 @@ class trainer(object):
                     writer.add_scalar("env/bl_EE_C", bl_EE_C, global_step)
                     writer.add_scalar("env/bl_EE_R", bl_EE_R, global_step)
                 episode_reward += reward
+                episode_reward_raw += reward_raw
                 bl_episode_reward += bl_reward
                 results["reward"].append(reward)
                 results["reward_epoch_mean"].append(episode_reward/args.num_steps)
