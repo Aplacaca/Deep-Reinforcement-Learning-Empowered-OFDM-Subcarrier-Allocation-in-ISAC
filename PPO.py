@@ -29,7 +29,7 @@ def parse_args(args = None):
     parser = argparse.ArgumentParser()
     # Env Config
     parser.add_argument('--subcarrier_number', type=int, default=8, help='subcarrier_number')
-    parser.add_argument('--cu_number', type=int, default=4, help='cu_number')
+    parser.add_argument('--cu_number', type=int, default=8, help='cu_number')
     parser.add_argument('--su_number', type=int, default=2, help='su_number')
     parser.add_argument('--action-dim', type=int, default=2, help='action-dim')
     parser.add_argument('--categorical-dim', type=int, default=3, help='categorical-dim of each action')
@@ -241,7 +241,7 @@ class trainer(object):
                 results["reward_epoch_mean"].append(episode_reward/args.num_steps)
                 # results["action"].append(action)
                 results["baseline_reward"].append(bl_reward)
-                results["baseline_reward_epoch_mean"].append(bl_episode_reward)
+                results["baseline_reward_epoch_mean"].append(bl_episode_reward/args.num_steps)
             if tensorboard:
                 writer.add_scalar("reward/epoch_mean", episode_reward/args.num_steps, global_step)
                 writer.add_scalar("reward/epoch_mean_raw", episode_reward_raw/args.num_steps, global_step)
