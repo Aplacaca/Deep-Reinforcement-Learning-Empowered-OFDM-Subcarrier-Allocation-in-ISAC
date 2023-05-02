@@ -29,11 +29,11 @@ def parse_args(args = None):
     parser = argparse.ArgumentParser()
     # Env Config
     parser.add_argument('--subcarrier_number', type=int, default=8, help='subcarrier_number')
-    parser.add_argument('--cu_number', type=int, default=8, help='cu_number')
-    parser.add_argument('--su_number', type=int, default=2, help='su_number')
-    parser.add_argument('--action-dim', type=int, default=2, help='action-dim')
-    parser.add_argument('--categorical-dim', type=int, default=3, help='categorical-dim of each action')
-    parser.add_argument('--state-dim', type=int, default=18, help='DIM OF STATE')
+    parser.add_argument('--cu_number', type=int, default=7, help='cu_number')
+    parser.add_argument('--su_number', type=int, default=4, help='su_number')
+    parser.add_argument('--action-dim', type=int, default=4, help='action-dim')
+    parser.add_argument('--categorical-dim', type=int, default=5, help='categorical-dim of each action')
+    parser.add_argument('--state-dim', type=int, default=20, help='DIM OF STATE')
     
     # Exiperiment Args
     parser.add_argument('--daytime', type=str, default=datetime.datetime.now().strftime('TD_%Y-%m-%d-%H-%M-%S'),

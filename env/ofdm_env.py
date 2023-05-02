@@ -78,6 +78,11 @@ class ISAC_BS(object):
         # print(H_c.shape)
         return H_c
     
+    def get_H_rc(self,):
+        H_rc = np.concatenate([UE.h for UE in self.M_r],axis=0)
+        # print(H_c.shape)
+        return H_rc
+    
     def get_H_r(self,):
         H_r = np.concatenate([UE.h_r for UE in self.M_r],axis=0)
         H_cr = np.concatenate([UE.h_r for UE in self.M_c],axis=0)
@@ -110,10 +115,11 @@ class ISAC_BS(object):
             SINR[k,:] = P_useful/(P_in+self.P_n)
         return SINR    
     
-    def _get_sensing_sinr(self,):
+    def _get_sensing_sinr_old(self,):
         # Calculate Initial Power On Each Subcarrier
         HP_C = self.U@self.P_c*np.power(self.H_cr,2)*self.S*(self.T_s)**2
         HP_R = self.D@self.P_r*np.power(self.H_r,2)*self.S*(self.T_s)**2
+        pdb.set_trace()
         IP_H_C = np.sum(HP_C, axis=0)
         SUM_HP_R = np.sum(HP_R, axis=0)
         SINR = np.zeros((self.N_r,self.N))
@@ -121,6 +127,21 @@ class ISAC_BS(object):
             P_useful = HP_R[l,:]
             IHP_R = SUM_HP_R - HP_R[l,:]
             P_in = (IHP_R+IP_H_C)
+            SINR[l,:] = P_useful/(P_in+self.P_n*self.S*self.T_s)
+        return SINR
+    
+    def _get_sensing_sinr(self,):
+        # Calculate Initial Power On Each Subcarrier
+        HP_C = self.U@self.P_c#*np.power(self.H_cr,2)*self.S*(self.T_s)**2
+        HP_R = self.D@self.P_r*np.power(self.H_r,2)*self.S*(self.T_s)**2
+        IP_H_C = np.sum(HP_C, axis=0)
+        SUM_HP_R = np.sum(HP_R, axis=0)
+        SINR = np.zeros((self.N_r,self.N))
+        H_rc_P = np.power(self.get_H_rc())
+        for l in range(self.N_r):
+            P_useful = HP_R[l,:]
+            IHP_R = SUM_HP_R - HP_R[l,:]
+            P_in = (IHP_R+IP_H_C*H_rc_P[l,:])
             SINR[l,:] = P_useful/(P_in+self.P_n*self.S*self.T_s)
         return SINR
     
@@ -140,6 +161,29 @@ class ISAC_BS(object):
         D_SET = np.eye(self.N_r)
         # self.U = U_SET[:,action_u]
         self.D = D_SET[:,action_d]
+        
+    def _non_reuse_rr(self,):
+        # sort U
+        assert(self.N <= self.N_c + self.N_r)
+        # First we allocate CUs
+        action_u = np.argsort(-self.H_c,axis=0)[:,0]
+        U_SET = np.eye(self.N_c)
+        self.U = np.zeros((self.N_c,self.N))
+        # self.U = U_SET[:,action_u]
+        self.U[:,:self.N_c] = U_SET[:,action_u]
+        # Init
+        matched_su = None
+        matched_cu = None
+        H_r_exclusive = None
+        # Then we assign SUs 
+        self.D = np.zeros((self.N_r,self.N))
+        H_r_rev = np.argsort(-self.H_r,axis=0)[:,0] # decrease
+        D_SET = np.eye(self.N_r)
+        # We first allocate SU to vacant subcarrier
+        N_vacant = self.N - self.N_c
+        SCHED_R = np.array([self.time%self.N_r]*N_vacant)
+        self.D[:,self.N_c:] = D_SET[:,SCHED_R]
+        
         
     def _naive_allocation(self,):
         assert(self.N <= self.N_c + self.N_r)
@@ -199,6 +243,19 @@ class ISAC_BS(object):
             print("SUM_MI_r: ",SUM_MI_r," EE: ",EE_R)
         return SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r,EE_C,EE_R
     
+    def get_per_ue_performance(self, print_log=False):
+        # Calculate SINR On Each Subcarrier
+        C_SINR = self._get_comm_sinr()
+        R_SINR = self._get_sensing_sinr()
+        # Cal COMM RATE
+        SUM_R_c = self.delta_f*np.sum(np.log2(1+C_SINR),axis=-1)
+        # Cal Sensing SUM MI
+        SUM_MI_r = 0.5*self.S*self.T_s*self.delta_f*np.sum(np.log2(1+R_SINR),axis=-1)
+        # Energy Efficiency
+        SUM_R_P = np.sum(self.D@self.P_r,axis=-1)
+        SUM_C_P = np.sum(self.U@self.P_c,axis=-1)
+        return SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r
+    
     def reward_to_go(self,EE_C,EE_R):
         # mean_EE_c = np.mean(self.EE_c_s[0:self.time+1])
         # mean_EE_r = np.mean(self.EE_r_s[0:self.time+1])
@@ -227,12 +284,16 @@ class ISAC_BS(object):
     def _penalty(self,):
         if np.any(np.sum(self.D,axis=0) > 1.5) or np.any(np.sum(self.D,axis=-1) < 0.9):
             return True
-        else:
+        else: 
             return False
         
     def _penalty_lt(self,):
         N_vacant = max(self.N - self.N_c, 0)
-        if np.any(self.select_num < (self.time+1)*1/self.N_r) or np.any(np.sum(self.D, axis=0) > 1.5) or N_vacant*np.any(np.sum(self.D[:,self.N-N_vacant:], axis=0) < 0.9):
+        if np.any(self.select_num < self.time//self.N_r-1e-4) or np.any(np.sum(self.D, axis=0) > 1.5) or N_vacant*np.any(np.sum(self.D[:,self.N-N_vacant:], axis=0) < 0.9):
+            # print("Less Sched UE:",np.any(self.select_num < (self.time+1)*1/self.N_r))
+            # print(f"{(self.time+1)*1/self.N_r + 1}.v.s.{self.select_num}")
+            # print("2 Sensing Reused:",np.any(np.sum(self.D, axis=0) > 1.5))
+            # print("Has Vacant SC:",N_vacant*np.any(np.sum(self.D[:,self.N-N_vacant:], axis=0) < 0.9))
             return True
         else:
             return False
@@ -245,6 +306,23 @@ class ISAC_BS(object):
         return action_set,idx
         
     def _get_state(self,):
+        H_c = self.get_H_c()    
+        H_rc = self.get_H_rc()    
+        H_r,H_cr = self.get_H_r()
+        IP_ = np.sum(self.U@self.P_c, axis = 0)
+        H_c = H_c[:,0].flatten()
+        H_r = H_r[:,0].flatten()
+        H_cr = H_cr[:,0].flatten()
+        #
+        U_SUM = np.sum(self.U,axis = -1)
+        D_SUM = np.sum(self.D,axis = -1)
+        SCHED = self.select_num.flatten()/(self.C+0.000001)
+        #
+        action_set,idx = self._get_reducted_action()
+        state = np.concatenate([SCHED,IP_,action_set])
+        return state
+    
+    def _get_state_old(self,):
         H_c = self.get_H_c()    
         H_r,H_cr = self.get_H_r()
         IP_ = np.sum(self.U@self.P_c*np.power(self.H_cr,2), axis = 0)
@@ -264,6 +342,7 @@ class ISAC_BS(object):
         done = 0
         lt_penalty = 0
         # DO ACTION
+        # self._non_reuse_rr()
         self._random_allocation()
         ran_SUM_R_P,ran_SUM_C_P,ran_SUM_R_c,ran_SUM_MI_r,ran_random_EE_C,ran_random_EE_R = self.get_performance()
         #
@@ -304,7 +383,7 @@ class ISAC_BS(object):
                 # SU
                 self.D[:,idx] = _SET[:,action]
                 lt_penalty = self._penalty_lt()
-                self.select_num += np.sum(self.D,axis=-1)
+                self.select_num += np.sum(self.D,axis=-1)>0.9
         # LET SU CHOOSE SUBCARRIER (PERMIT NOT CHOOSE)
             # _SET = np.zeros((self.N+1, self.N))
             # _SET[:self.N,:] = np.eye(self.N)
@@ -327,8 +406,8 @@ class ISAC_BS(object):
         # reward_raw = self.reward_to_go(EE_C,EE_R)
         # bl_random_reward = self.reward_to_go(bl_random_EE_C,bl_random_EE_R) 
         ####################new
-        bl_random_reward = self.lt_reward_to_go(self.bl_P_c_sum,self.bl_R_c_sum,self.bl_P_r_sum,self.bl_MI_r_sum) 
-        ran_random_reward = self.lt_reward_to_go(self.ran_P_c_sum,self.ran_R_c_sum,self.ran_P_r_sum,self.ran_MI_r_sum) 
+        bl_random_reward = self.lt_reward_to_go(self.bl_P_c_sum,self.bl_R_c_sum,self.bl_P_r_sum,self.bl_MI_r_sum)
+        ran_random_reward = self.lt_reward_to_go(self.ran_P_c_sum,self.ran_R_c_sum,self.ran_P_r_sum,self.ran_MI_r_sum)
         reward = (lt_penalty==0)*self.lt_reward_to_go(self.P_c_sum,self.R_c_sum,self.P_r_sum,self.MI_r_sum) + (lt_penalty==1)*-5
         reward_raw = self.lt_reward_to_go(self.P_c_sum,self.R_c_sum,self.P_r_sum,self.MI_r_sum)
         
@@ -370,3 +449,21 @@ class ISAC_BS(object):
         next_state = self._get_state()
         return next_state,done
         
+if __name__ == "__main__":
+    env = ISAC_BS(N=8,N_c=4,N_r=6)
+    R_c_naive = []
+    MI_r_naive = []
+    R_c_random = []
+    MI_r_random = []
+    for i in range(40000):
+        env._non_reuse_rr()
+        # env._random_allocation()
+        _,_,SUM_R_c,SUM_MI_r = env.get_per_ue_performance()
+        R_c_random.append(SUM_R_c)
+        MI_r_random.append(SUM_MI_r)
+        #
+        env._naive_allocation()
+        _,_,SUM_R_c,SUM_MI_r = env.get_per_ue_performance()
+        R_c_naive.append(SUM_R_c)
+        MI_r_naive.append(SUM_MI_r)
+        _ = env.step(freeze=False)
