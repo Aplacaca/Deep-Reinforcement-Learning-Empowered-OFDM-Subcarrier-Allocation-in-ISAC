@@ -11,7 +11,8 @@ class UE(object):
         self.d,self.h,self.h_r = self._generate_channel()
         
     def _generate_channel(self,):
-        d = np.random.rand()*10.0+0.5 # Range
+        d = np.random.rand()*10.0+0.5 # Range to BS
+        d_t = np.random.rand()*5.0+2.0 # Range to Target
         theta = np.random.rand()*np.pi # Azimuth Angle
         f_series = np.expand_dims(np.linspace(1,self.N+1,self.N)*self.delta_f+self.f_c, axis=0)
         h = (3*10e8/(4*np.pi*d*f_series)) # SQRT PATHLOSS
@@ -119,7 +120,6 @@ class ISAC_BS(object):
         # Calculate Initial Power On Each Subcarrier
         HP_C = self.U@self.P_c*np.power(self.H_cr,2)*self.S*(self.T_s)**2
         HP_R = self.D@self.P_r*np.power(self.H_r,2)*self.S*(self.T_s)**2
-        pdb.set_trace()
         IP_H_C = np.sum(HP_C, axis=0)
         SUM_HP_R = np.sum(HP_R, axis=0)
         SINR = np.zeros((self.N_r,self.N))
@@ -137,11 +137,10 @@ class ISAC_BS(object):
         IP_H_C = np.sum(HP_C, axis=0)
         SUM_HP_R = np.sum(HP_R, axis=0)
         SINR = np.zeros((self.N_r,self.N))
-        H_rc_P = np.power(self.get_H_rc())
         for l in range(self.N_r):
             P_useful = HP_R[l,:]
             IHP_R = SUM_HP_R - HP_R[l,:]
-            P_in = (IHP_R+IP_H_C*H_rc_P[l,:])
+            P_in = (IHP_R+IP_H_C*HP_R[l,:])
             SINR[l,:] = P_useful/(P_in+self.P_n*self.S*self.T_s)
         return SINR
     
@@ -199,6 +198,7 @@ class ISAC_BS(object):
         H_r_exclusive = None
         # Then we assign SUs 
         self.D = np.zeros((self.N_r,self.N))
+        # H_r_rev = np.argsort(-self.get_H_rc(),axis=0)[:,0] # decrease
         H_r_rev = np.argsort(-self.H_r,axis=0)[:,0] # decrease
         D_SET = np.eye(self.N_r)
         # We first allocate SU to vacant subcarrier
@@ -210,9 +210,10 @@ class ISAC_BS(object):
         if self.N_r > self.N - self.N_c:
             N_vacant = min(self.N - self.N_c, self.N_r)
             N_share = self.N_r - (self.N - self.N_c)
-            H_cr_list = np.argsort(self.H_cr,axis=0)[:,0] # increase
+            # H_cr_list = np.argsort(self.H_c,axis=0)[:,0] # increase
+            c_list = np.argsort(self.H_c,axis=0)[:,0] # increase
             matched_su = H_r_rev[N_vacant:]
-            matched_cu = H_cr_list[:N_share]
+            matched_cu = c_list[:N_share]
             for l in range(matched_su.shape[0]):
                 self.D[matched_su[l],:] = deepcopy(self.U[matched_cu[l],:])
         # print("H_r_exclusive: ",H_r_exclusive," matched_su: ", matched_su)
@@ -299,6 +300,13 @@ class ISAC_BS(object):
             return False
         
     def _get_reducted_action(self,):
+        IP_ = np.sum(self.U@self.P_c*np.power(self.H_c,2), axis = 0)
+        idx = np.sort(np.argsort(IP_)[:self.N_r])
+        action_set = np.zeros(self.N)
+        action_set[idx] = 1.0
+        return action_set,idx
+    
+    def _get_reducted_action_old(self,):
         IP_ = np.sum(self.U@self.P_c*np.power(self.H_cr,2), axis = 0)
         idx = np.sort(np.argsort(IP_)[:self.N_r])
         action_set = np.zeros(self.N)
@@ -307,7 +315,7 @@ class ISAC_BS(object):
         
     def _get_state(self,):
         H_c = self.get_H_c()    
-        H_rc = self.get_H_rc()    
+        H_rc = self.get_H_rc()[:,0].flatten()    
         H_r,H_cr = self.get_H_r()
         IP_ = np.sum(self.U@self.P_c, axis = 0)
         H_c = H_c[:,0].flatten()
@@ -319,7 +327,8 @@ class ISAC_BS(object):
         SCHED = self.select_num.flatten()/(self.C+0.000001)
         #
         action_set,idx = self._get_reducted_action()
-        state = np.concatenate([SCHED,IP_,action_set])
+        IP_EFF = np.sum(self.U@self.P_c, axis = 0)[idx]
+        state = np.concatenate([SCHED,IP_EFF])
         return state
     
     def _get_state_old(self,):
@@ -358,17 +367,7 @@ class ISAC_BS(object):
         self.bl_P_c_sum += bl_SUM_C_P
         self.bl_P_r_sum += bl_SUM_R_P
         if action is not None:
-        # LET SUBCARRIER CHOOSE SU
-            # D_SET = np.zeros((self.N_r,self.N_r+1))
-            # D_SET[:,:self.N_r] = np.eye(self.N_r)
-            # self.D = D_SET[:,action]
-            # _penalty = self._penalty()
-        # LET SU CHOOSE SUBCARRIER 
-            # D_SET = np.eye(self.N)
-            # self.D = D_SET[action,:]
-            # self.select_num += np.concatenate([np.sum(self.U,axis=-1),np.sum(self.D,axis=-1)],axis=0)
-            # _penalty = self._penalty()
-         # LET SUBCARRIER CHOOSE SU (PERMIT NOT CHOOSE)
+        # LET SUBCARRIER CHOOSE SU (PERMIT NOT CHOOSE)
             if not reduction:
                 _SET = np.zeros((self.N_r, self.N_r+1))
                 _SET[:,:self.N_r] = np.eye(self.N_r)
@@ -381,15 +380,10 @@ class ISAC_BS(object):
                 _SET = np.zeros((self.N_r, self.N_r+1))
                 _SET[:,:self.N_r] = np.eye(self.N_r)
                 # SU
+                self.D = np.zeros((self.N_r,self.N))
                 self.D[:,idx] = _SET[:,action]
-                lt_penalty = self._penalty_lt()
                 self.select_num += np.sum(self.D,axis=-1)>0.9
-        # LET SU CHOOSE SUBCARRIER (PERMIT NOT CHOOSE)
-            # _SET = np.zeros((self.N+1, self.N))
-            # _SET[:self.N,:] = np.eye(self.N)
-            # # SU
-            # self.D = _SET[action,:]
-            # self.select_num += np.sum(self.D,axis=-1)
+                lt_penalty = self._penalty_lt()
         
         SUM_R_P,SUM_C_P,SUM_R_c,SUM_MI_r,EE_C,EE_R = self.get_performance()
         #
